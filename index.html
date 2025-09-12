@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Grammar Decision Game — One File</title>
+    <!-- Tailwind (Play CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 + ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel a böngészőbeli JSX-hez -->
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useRef, useState } = React;
+
+      // ======= CONFIG =======
+      const TEACHER_PIN = "tanar";
+      const TEACHER_TIMEOUT_MS = 60000;
+      const STATS_KEY = "grammarDecisionStatsV1_onefile";
+
+      // ======= TYPES =======
+      const TYPES = {
+        A:{id:"A",name:"TYPE A — Present Simple",hu:"Iskolába járok.",en:"I go to school.",expl:"Általános, szokásos cselekvés / tény — Present Simple."},
+        B:{id:"B",name:"TYPE B — Present Continuous",hu:"Egy könyvet olvasok.",en:"I am reading a book.",expl:"Most éppen zajló cselekvés — Present Continuous."},
+        C:{id:"C",name:"TYPE C — Present Perfect Simple (unspecified time)",hu:"(Olvastam már egy könyvet.)",en:"I have read a book.",expl:"Múltban történt, de időpont nincs megadva; eredmény a jelenben releváns."},
+        D:{id:"D",name:"TYPE D — Present Perfect Continuous (for)",hu:"(Három órája könyvet olvasok.)",en:"I have been reading a book for three hours.",expl:"Időtartam (for) a jelenig — folyamat hangsúlyos."},
+        E:{id:"E",name:"TYPE E — Present Perfect Continuous (since)",hu:"(10 óra óta könyvet olvasok.)",en:"I have been reading a book since 10 o'clock.",expl:"Kezdő időpont (since) a jelenig — folyamat hangsúlyos."},
+        F:{id:"F",name:"TYPE F — Past Continuous",hu:"10-kor / amikor hívtál, iskolába mentem.",en:"I was going to school at 10 / when you called.",expl:"Múltbeli folyamat egy adott időpontban / egy másik cselekvés közben."},
+        G:{id:"G",name:"TYPE G — Past Simple (known time)",hu:"Tegnap iskolába mentem.",en:"I went to school yesterday.",expl:"Múltbeli, befejezett, ismert időponthoz kötött cselekvés."},
+        H:{id:"H",name:"TYPE H — Past Perfect Simple",hu:"Mire felhívott, megcsináltam a házimat.",en:"I had done my homework by the time he called me.",expl:"Két múltbeli cselekvés: a korábbi befejezett (past perfect) és a későbbi múlt."},
+        I:{id:"I",name:"TYPE I — Past Perfect Continuous (for)",hu:"Két órája a házimat csináltam, amikor felhívott.",en:"I had been doing my homework for two hours when he called me.",expl:"Időtartam (for) a múlt egy pontjáig — folyamat hangsúlyos."},
+        J:{id:"J",name:"TYPE J — Past Perfect Continuous (since)",hu:"10 óra óta a házimat csináltam, amikor felhívott.",en:"I had been doing my homework since 10 o'clock when he called me.",expl:"Kezdő időpont (since) a múlt egy pontjáig — folyamat hangsúlyos."},
+      };
+
+      // ======= SENTENCE BANK =======
+      const SENTENCES = [
+        { id:"s1", type:"A", hu:TYPES.A.hu, en:TYPES.A.en },
+        { id:"s2", type:"B", hu:TYPES.B.hu, en:TYPES.B.en },
+        { id:"s3", type:"C", hu:"Olvastam már egy könyvet.", en:TYPES.C.en },
+        { id:"s4", type:"D", hu:"Három órája könyvet olvasok.", en:TYPES.D.en },
+        { id:"s5", type:"E", hu:"10 óra óta könyvet olvasok.", en:TYPES.E.en },
+        { id:"s6", type:"F", hu:TYPES.F.hu, en:TYPES.F.en },
+        { id:"s7", type:"G", hu:TYPES.G.hu, en:TYPES.G.en },
+        { id:"s8", type:"H", hu:TYPES.H.hu, en:TYPES.H.en },
+        { id:"s9", type:"I", hu:TYPES.I.hu, en:TYPES.I.en },
+        { id:"s10", type:"J", hu:TYPES.J.hu, en:TYPES.J.en },
+      ];
+
+      // ======= DECISION TREE =======
+      const TREE = {
+        start: { id:"start", prompt:"1) Jelen idő? vagy Múlt idő?", choices:[
+          { label:"Jelen idő", next:"present_branch" },
+          { label:"Múlt idő", next:"past_branch" },
+        ]},
+        present_branch: { id:"present_branch", prompt:"2) Egyszerű? vagy Folyamatos?", choices:[
+          { label:"Egyszerű", endType:"A" },
+          { label:"Folyamatos", next:"pres_cont_known" },
+        ]},
+        pres_cont_known: { id:"pres_cont_known", prompt:"4) Tudom, mennyi ideig történt (van 'for' vagy 'since')? vagy Nem tudom, mennyi ideig történt?", choices:[
+          { label:"Nem tudom, mennyi ideig történt.", endType:"B" },
+          { label:"Tudom, mennyi ideig történt (van 'for' vagy 'since').", next:"pres_cont_for_since" },
+        ]},
+        pres_cont_for_since: { id:"pres_cont_for_since", prompt:"6) Egy időponthoz képest (pontosan mióta)? vagy Egy idő intervallumhoz képest (mennyi ideig)?", choices:[
+          { label:"Egy időponthoz képest (pontosan mióta)?", endType:"E" },
+          { label:"Egy idő intervallumhoz képest (mennyi ideig)?", endType:"D" },
+        ]},
+        past_branch: { id:"past_branch", prompt:"10) Egyszerű (egy cselekvés)? vagy Összetett (két cselekvés)?", choices:[
+          { label:"Egyszerű (egy cselekvés)", next:"past_simple_known" },
+          { label:"Összetett (két cselekvés)", next:"past_compound_kind" },
+        ]},
+        past_simple_known: { id:"past_simple_known", prompt:"11) Tudom, mikor történt. vagy Nem tudom, mikor történt.", choices:[
+          { label:"Tudom, mikor történt.", endType:"G" },
+          { label:"Nem tudom, mikor történt.", endType:"C" },
+        ]},
+        past_compound_kind: { id:"past_compound_kind", prompt:"14) Egyszerű (egyszeri cselekvés)? vagy Folyamatos (hosszabb ideig tartó cselekvés)?", choices:[
+          { label:"Egyszerű (egyszeri cselekvés)", endType:"H" },
+          { label:"Folyamatos (hosszabb ideig tartó cselekvés)", next:"past_cont_known" },
+        ]},
+        past_cont_known: { id:"past_cont_known", prompt:"16) Tudom, mennyi ideig történt (van 'for' vagy 'since'). vagy Nem tudom, mennyi ideig történt.", choices:[
+          { label:"Nem tudom, mennyi ideig történt.", endType:"F" },
+          { label:"Tudom, mennyi ideig történt (van 'for' vagy 'since').", next:"past_cont_for_since" },
+        ]},
+        past_cont_for_since: { id:"past_cont_for_since", prompt:"18) Egy időponthoz képest (pontosan mióta)? vagy Egy idő intervallumhoz képest (mennyi ideig)?", choices:[
+          { label:"Egy időponthoz képest (pontosan mióta)?", endType:"J" },
+          { label:"Egy idő intervallumhoz képest (mennyi ideig)?", endType:"I" },
+        ]},
+      };
+
+      function getNode(id){ return TREE[id]; }
+
+      function Crumb({ step, prompt, choice }) {
+        return (
+          <div className="flex items-start gap-2 text-sm">
+            <div className="min-w-12 text-xs text-gray-500">{step}</div>
+            <div className="flex-1 rounded-xl bg-gray-50 px-3 py-2 shadow-sm ring-1 ring-gray-200">
+              <span className="font-medium">{prompt}</span> <span className="opacity-70">→</span> {choice}
+            </div>
+          </div>
+        );
+      }
+
+      function loadStats(){
+        try { const raw = localStorage.getItem(STATS_KEY); return raw ? JSON.parse(raw) : null; }
+        catch { return null; }
+      }
+      function saveStats(stats){
+        try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch {}
+      }
+      function defaultStats(){
+        return { totalTries:0, totalCorrect:0, mismatches:{}, lastNodeMistakes:{}, choiceCounts:{} };
+      }
+
+      function GrammarDecisionGame(){
+        const [currentSentenceId, setCurrentSentenceId] = useState(SENTENCES[0].id);
+        const [currentNodeId, setCurrentNodeId] = useState("start");
+        const [history, setHistory] = useState([]);
+        const [endType, setEndType] = useState(null);
+
+        const [teacherMode, setTeacherMode] = useState(false);
+        const [showPin, setShowPin] = useState(false);
+        const [pin, setPin] = useState("");
+        const [secondsLeft, setSecondsLeft] = useState(0);
+        const timerRef = useRef(null);
+        const intervalRef = useRef(null);
+
+        const [stats, setStats] = useState(() => loadStats() ?? defaultStats());
+
+        const sentence = useMemo(() => {
+          const found = SENTENCES.find(s => s.id === currentSentenceId);
+          return found || SENTENCES[0];
+        }, [currentSentenceId]);
+        const targetType = sentence.type;
+
+        // Teacher mode timer
+        useEffect(() => {
+          if (teacherMode) {
+            setSecondsLeft(Math.ceil(TEACHER_TIMEOUT_MS / 1000));
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            intervalRef.current = setInterval(() => {
+              setSecondsLeft(s => (s > 0 ? s - 1 : 0));
+            }, 1000);
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(() => { setTeacherMode(false); }, TEACHER_TIMEOUT_MS);
+          } else {
+            setSecondsLeft(0);
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (timerRef.current) clearTimeout(timerRef.current);
+          }
+          return () => {
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (timerRef.current) clearTimeout(timerRef.current);
+          };
+        }, [teacherMode]);
+
+        function extendTeacherMode(bySeconds=30){
+          if (!teacherMode) return;
+          setSecondsLeft(s => s + bySeconds);
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          intervalRef.current = setInterval(() => {
+            setSecondsLeft(s => (s > 0 ? s - 1 : 0));
+          }, 1000);
+          if (timerRef.current) clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => setTeacherMode(false), (secondsLeft + bySeconds) * 1000);
+        }
+
+        function restartSame(){ setCurrentNodeId("start"); setHistory([]); setEndType(null); }
+        function nextRandom(){
+          const others = SENTENCES.filter(s => s.id !== currentSentenceId);
+          const pick = others[Math.floor(Math.random()*others.length)] || SENTENCES[0];
+          setCurrentSentenceId(pick.id);
+          setCurrentNodeId("start");
+          setHistory([]);
+          setEndType(null);
+        }
+
+        function onChoose(choice){
+          const node = getNode(currentNodeId);
+          const nextNodeId = choice.next || null;
+          setHistory(h => [...h, {
+            step: h.length+1, nodeId: node.id, prompt: node.prompt,
+            choiceLabel: choice.label, nextNodeId, endType: choice.endType || null
+          }]);
+          if (choice.endType) setEndType(choice.endType);
+          else if (choice.next) setCurrentNodeId(choice.next);
+        }
+
+        function backOne(){
+          setHistory(h => {
+            if (h.length === 0) return h;
+            const last = h[h.length-1];
+            const newHist = h.slice(0,-1);
+            if (endType) setEndType(null);
+            setCurrentNodeId(last.nodeId);
+            return newHist;
+          });
+        }
+
+        const finished = !!endType;
+        const success = finished && endType === targetType;
+
+        useEffect(() => {
+          if (!finished) return;
+          setStats(prev => {
+            const s = prev ? { ...prev } : defaultStats();
+            s.totalTries += 1;
+            if (success) s.totalCorrect += 1;
+            const last = history[history.length - 1];
+            if (!success) {
+              const key = `${targetType}->${endType}`;
+              s.mismatches[key] = (s.mismatches[key] || 0) + 1;
+              if (last) {
+                s.lastNodeMistakes[last.nodeId] = (s.lastNodeMistakes[last.nodeId] || 0) + 1;
+                const ckey = `${last.nodeId} :: ${last.choiceLabel}`;
+                if (!s.choiceCounts[ckey]) s.choiceCounts[ckey] = { chosen: 0, wrong: 0 };
+                s.choiceCounts[ckey].chosen += 1;
+                s.choiceCounts[ckey].wrong += 1;
+              }
+            } else if (last) {
+              const ckey = `${last.nodeId} :: ${last.choiceLabel}`;
+              if (!s.choiceCounts[ckey]) s.choiceCounts[ckey] = { chosen: 0, wrong: 0 };
+              s.choiceCounts[ckey].chosen += 1;
+            }
+            saveStats(s);
+            return s;
+          });
+        }, [finished]);
+
+        const node = getNode(currentNodeId);
+
+        return (
+          <div className="mx-auto max-w-5xl p-6 font-sans">
+            <header className="mb-6 flex flex-col gap-2">
+              <h1 className="text-2xl font-bold tracking-tight">Grammar Decision Game</h1>
+              <p className="text-gray-600">
+                Válassz lépésről lépésre a magyar mondat alapján — a cél, hogy eljuss a helyes
+                angol igeidőig és fordításig. A bal oldalon mindig látható a kiinduló mondat és a
+                korábbi döntéseid.
+              </p>
+            </header>
+
+            <div className="grid gap-6 md:grid-cols-[1.1fr_1.6fr]">
+              <aside className="space-y-4">
+                <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                  <div className="text-xs uppercase tracking-wide text-gray-500">Kiinduló mondat</div>
+                  <div className="mt-1 text-lg">{sentence.hu}</div>
+                  {teacherMode && (
+                    <div className="mt-2 text-sm text-gray-500">
+                      Cél igeidő: <span className="font-semibold">{TYPES[sentence.type].name}</span>
+                      <span className="ml-2 text-xs text-gray-400">(Tanári mód • {secondsLeft}s)</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                  <div className="mb-2 text-xs uppercase tracking-wide text-gray-500">Döntési útvonal</div>
+                  {history.length === 0 ? (
+                    <p className="text-sm text-gray-500">Még nincs döntés. Válassz a jobb oldalon!</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {history.map(h => (
+                        <Crumb key={h.step} step={`${h.step}.`} prompt={h.prompt} choice={h.choiceLabel} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={restartSame} className="rounded-2xl bg-gray-900 px-4 py-2 text-white shadow hover:opacity-90">
+                    Újrakezdés
+                  </button>
+                  <button onClick={nextRandom} className="rounded-2xl bg-gray-100 px-4 py-2 ring-1 ring-gray-200 hover:bg-gray-50">
+                    Új, véletlen mondat
+                  </button>
+
+                  <div className="ml-auto flex items-center gap-3">
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={teacherMode}
+                        onChange={(e)=>{ if(e.target.checked){ setShowPin(true); } else { setTeacherMode(false); } }}
+                        className="h-4 w-4"
+                      />
+                      Tanári mód
+                    </label>
+                    {teacherMode && (
+                      <button onClick={()=>extendTeacherMode(30)} className="rounded-xl bg-white px-2 py-1 text-xs ring-1 ring-gray-200 hover:bg-gray-50">
+                        +30s
+                      </button>
+                    )}
+                  </div>
+
+                  {showPin && !teacherMode && (
+                    <div className="w-full rounded-2xl bg-white p-3 ring-1 ring-gray-200">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="password"
+                          placeholder="Tanári PIN"
+                          value={pin}
+                          onChange={(e)=>setPin(e.target.value)}
+                          className="flex-1 rounded-xl border px-3 py-2 text-sm"
+                        />
+                        <button
+                          className="rounded-xl bg-gray-900 px-3 py-2 text-sm text-white"
+                          onClick={()=>{
+                            if (pin === TEACHER_PIN){ setTeacherMode(true); setShowPin(false); setPin(""); }
+                            else { alert("Hibás PIN."); }
+                          }}
+                        >Belépés</button>
+                        <button
+                          className="rounded-xl bg-gray-100 px-3 py-2 text-sm ring-1 ring-gray-200"
+                          onClick={()=>{ setShowPin(false); setPin(""); }}
+                        >Mégse</button>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500">Alapértelmezett: "tanar" (kódban módosítható)</div>
+                    </div>
+                  )}
+                </div>
+
+                {teacherMode && (
+                  <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-sm font-semibold">Statisztikák</div>
+                      <button onClick={()=>{ const s=defaultStats(); saveStats(s);  }} className="rounded-xl bg-white px-2 py-1 text-xs ring-1 ring-red-200 hover:bg-red-50">Nulázás</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-xl bg-gray-50 p-3 ring-1 ring-gray-200">Összes próbálkozás: <span className="font-semibold">{(loadStats()||defaultStats()).totalTries}</span></div>
+                      <div className="rounded-xl bg-gray-50 p-3 ring-1 ring-gray-200">Sikerarány: <span className="font-semibold">{(()=>{const s=loadStats()||defaultStats(); return s.totalTries? Math.round((s.totalCorrect/s.totalTries)*100):0;})()}%</span></div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">Gyakori téves párok</div>
+                      <ul className="list-disc space-y-1 pl-5 text-sm">
+                        {Object.entries((loadStats()||defaultStats()).mismatches).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>(
+                          <li key={k}>{k} <span className="text-gray-500">— {v}×</span></li>
+                        ))}
+                        {Object.keys((loadStats()||defaultStats()).mismatches).length===0 && <li className="text-gray-500">Még nincs adat.</li>}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </aside>
+
+              <main className="space-y-4">
+                {!finished ? (
+                  <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="text-sm text-gray-500">Aktuális kérdés</div>
+                      {history.length>0 && (
+                        <button onClick={backOne} className="rounded-xl bg-white px-3 py-1 text-sm ring-1 ring-gray-200 hover:bg-gray-50">◀ Vissza egy lépést</button>
+                      )}
+                    </div>
+                    <h2 className="text-xl font-semibold leading-snug">{getNode(currentNodeId).prompt}</h2>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                      {getNode(currentNodeId).choices.map((c,idx)=>(
+                        <button key={idx} onClick={()=>onChoose(c)} className="rounded-2xl px-4 py-3 text-left shadow-sm ring-1 ring-gray-200 hover:bg-gray-50">
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className={`rounded-2xl p-5 shadow-sm ring-1 ${success? "bg-green-50 ring-green-200" : "bg-amber-50 ring-amber-200"}`}>
+                      <div className="mb-1 flex items-center justify-between">
+                        <div className="text-xs uppercase tracking-wide text-gray-600">Eredmény</div>
+                        <button onClick={backOne} className="rounded-xl bg-white px-3 py-1 text-sm ring-1 ring-gray-200 hover:bg-gray-50">◀ Vissza egy lépést</button>
+                      </div>
+                      <h2 className="text-lg font-semibold">{TYPES[endType].name}</h2>
+                      <p className="mt-1 text-sm text-gray-700">{TYPES[endType].expl}</p>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-xl bg-white p-4 ring-1 ring-gray-200">
+                          <div className="text-xs uppercase tracking-wide text-gray-500">Fordítás</div>
+                          <div className="mt-1 text-base">{TYPES[endType].en}</div>
+                        </div>
+                        <div className="rounded-xl bg-white p-4 ring-1 ring-gray-200">
+                          <div className="text-xs uppercase tracking-wide text-gray-500">Kiinduló mondat</div>
+                          <div className="mt-1 text-base">{sentence.hu}</div>
+                        </div>
+                      </div>
+
+                     <div className="mt-4">
+  {success ? (
+    <div>
+      <p className="text-lg font-bold text-green-700">SUCCESS</p>
+      <p className="text-sm text-green-700 mt-1">🎉 Mr Susu says – great job!</p>
+    </div>
+  ) : (
+    <div>
+      <p className="text-lg font-bold text-red-700">TRY AGAIN</p>
+      <p className="text-sm text-red-700 mt-1">
+        😢 Now Mr. Susu is very sad. Try again, make him happy!
+      </p>
+    </div>
+  )}
+</div>
+
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button onClick={restartSame} className="rounded-2xl bg-gray-900 px-4 py-2 text-white shadow hover:opacity-90">Ugyanazzal újra</button>
+                        <button onClick={nextRandom} className="rounded-2xl bg-gray-100 px-4 py-2 ring-1 ring-gray-200 hover:bg-gray-50">Új, véletlen mondat</button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
+                      <div className="mb-3 text-sm font-semibold">Típusok összefoglaló táblája</div>
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        {Object.values(TYPES).map(t=>(
+                          <div key={t.id} className="rounded-xl bg-gray-50 p-4 ring-1 ring-gray-200">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-semibold">{t.name}</div>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-xs ring-1 ring-gray-200">{t.id}</span>
+                            </div>
+                            <div className="mt-1 text-sm text-gray-700">{t.expl}</div>
+                            <div className="mt-2 text-sm"><span className="font-medium">HU:</span> {t.hu}</div>
+                            <div className="text-sm"><span className="font-medium">EN:</span> {t.en}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </main>
+            </div>
+
+            <footer className="mt-8 text-center text-xs text-gray-500">
+              Egyfájlos verzió — GitHub Pages-hez csak ezt a fájlt kell feltölteni.
+            </footer>
+          </div>
+        );
+      }
+
+      function App(){ return <GrammarDecisionGame/>; }
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App/>);
+    </script>
+  </body>
+</html>
